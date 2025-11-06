@@ -13,17 +13,24 @@ return new class extends Migration
     {
         Schema::create('users', function (Blueprint $table) {
             $table->id();
-            $table->string('name');
-            $table->string('email')->unique();
+            $table->string('first_name', 150);
+            $table->string('last_name', 150);
+            $table->string('email', 150)->unique();
             $table->timestamp('email_verified_at')->nullable();
-            $table->string('password');
+            $table->string('password_hash');
+            $table->string('phone_number', 50);
+            $table->string('city', 100);
+            $table->string('address');
+            $table->enum('gender', ['male', 'female'])->default('male');
+            $table->boolean('is_active')->default('true');
             $table->rememberToken();
             $table->timestamps();
         });
 
         Schema::create('password_reset_tokens', function (Blueprint $table) {
-            $table->string('email')->primary();
-            $table->string('token');
+            $table->id();
+            $table->string('email', 150);
+            $table->string('token', 150);
             $table->timestamp('created_at')->nullable();
         });
 
