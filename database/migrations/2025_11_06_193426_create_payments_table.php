@@ -19,7 +19,7 @@ return new class extends Migration
             $table->string('transaction_ref', 100)->unique();
             $table->timestamps();
 
-            $table->index(['booking_id, status']);
+            $table->index(['booking_id', 'status']);
 
             $table->foreign('booking_id')->references('id')->on('bookings')->onDelete('cascade');
         });
