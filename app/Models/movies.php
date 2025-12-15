@@ -27,6 +27,6 @@ class movies extends Model
 
     public function screenings(): HasMany
     {
-        return $this->hasMany(screenings::class);
+        return $this->hasMany(screenings::class, 'movie_id'); // Explicitly specify foreign key
     }
 }
