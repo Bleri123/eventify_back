@@ -76,4 +76,25 @@ class MoviesController extends Controller
 
         return response()->json($movies);
     }
+    
+    // GET /api/movies/{id}
+    // Query param: date (optional, defaults to today)
+    public function show(Request $request, $id): JsonResponse
+    {
+        $movie = movies::with('genres')->findOrFail($id);
+
+        $date = $request->query('date');
+        $today = now()->format('Y-m-d');
+        $filterDate = $date ?: $today;
+
+        // Load screenings for the selected date (or today) with showroom info
+        $movie->load(['screenings' => function ($q) use ($filterDate) {
+            $q->whereDate('start_time', $filterDate)
+              ->where('status', 'on_sale')
+              ->with('showroom')  // Load showroom info
+              ->orderBy('start_time');
+        }]);
+
+        return response()->json($movie);
+    }
 }
