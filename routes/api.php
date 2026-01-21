@@ -33,10 +33,19 @@ Route::controller(GenresController::class)->prefix('genres')->group(function () 
 Route::controller(MoviesController::class)->prefix('movies')->group(function () {
     Route::get('/', 'index')->name('movies.index');
     Route::get('/{id}', 'show')->name('movies.show');
+    Route::middleware('auth:api')->group(function () {
+        Route::post('/', 'store')->name('movies.store');
+        Route::put('/{id}', 'update')->name('movies.update');
+        Route::delete('/{id}', 'destroy')->name('movies.destroy');
+    });
 });
 
 Route::controller(ScreeningsController::class)->prefix('screenings')->group(function () {
+    Route::get('/by-date', 'getByDate')->name('screenings.by-date');
     Route::get('/{id}', 'show')->name('screenings.show');
+    Route::middleware('auth:api')->group(function () {
+        Route::post('/', 'store')->name('screenings.store');
+    });
 });
 
 Route::controller(SeatsController::class)->prefix('screenings')->group(function () {

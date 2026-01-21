@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\movies;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
 
 class MoviesController extends Controller
 {
@@ -76,25 +78,163 @@ class MoviesController extends Controller
 
         return response()->json($movies);
     }
-    
+
     // GET /api/movies/{id}
     // Query param: date (optional, defaults to today)
+    // Query param: admin (optional, if 'true' loads all screenings to get base_price)
     public function show(Request $request, $id): JsonResponse
     {
         $movie = movies::with('genres')->findOrFail($id);
 
-        $date = $request->query('date');
-        $today = now()->format('Y-m-d');
-        $filterDate = $date ?: $today;
+        // For admin edit purposes, load the most recent screening to get base_price
+        if ($request->query('admin') === 'true') {
+            $movie->load(['screenings' => function ($q) {
+                $q->orderBy('start_time', 'desc')->limit(1);
+            }]);
+        } else {
+            // For regular users, load screenings for the selected date (or today) with showroom info
+            $date = $request->query('date');
+            $today = now()->format('Y-m-d');
+            $filterDate = $date ?: $today;
 
-        // Load screenings for the selected date (or today) with showroom info
-        $movie->load(['screenings' => function ($q) use ($filterDate) {
-            $q->whereDate('start_time', $filterDate)
-              ->where('status', 'on_sale')
-              ->with('showroom')  // Load showroom info
-              ->orderBy('start_time');
-        }]);
+            $movie->load(['screenings' => function ($q) use ($filterDate) {
+                $q->whereDate('start_time', $filterDate)
+                  ->where('status', 'on_sale')
+                  ->with('showroom')  // Load showroom info
+                  ->orderBy('start_time');
+            }]);
+        }
 
         return response()->json($movie);
+    }
+
+    // POST /api/movies
+    public function store(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'title' => 'required|string|max:255',
+            'description' => 'required|string',
+            'duration_minutes' => 'required|integer|min:1',
+            'release_date' => 'required|date',
+            'movie_language' => 'required|string|max:50',
+            'status' => 'required|in:coming_soon,now_showing,inactive',
+            'genre_ids' => 'required|array|min:1',
+            'genre_ids.*' => 'exists:genres,id',
+            'poster' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:5120',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        // Handle poster upload
+        $posterPath = null;
+        if ($request->hasFile('poster')) {
+            $file = $request->file('poster');
+            $fileName = time() . '_' . $file->getClientOriginalName();
+            $posterPath = 'posters/' . $fileName;
+            $file->storeAs('public', $posterPath);
+            $posterPath = 'storage/' . $posterPath;
+        }
+
+        // Create the movie
+        $movie = movies::create([
+            'title' => $request->input('title'),
+            'description' => $request->input('description'),
+            'duration_minutes' => $request->input('duration_minutes'),
+            'release_date' => $request->input('release_date'),
+            'movie_language' => $request->input('movie_language'),
+            'status' => $request->input('status'),
+            'poster_url' => $posterPath,
+        ]);
+
+        // Attach genres
+        $genreIds = $request->input('genre_ids', []);
+        $movie->genres()->attach($genreIds);
+
+        // Load genres for response
+        $movie->load('genres');
+
+        return response()->json($movie, 201);
+    }
+
+    // PUT /api/movies/{id}
+    public function update(Request $request, $id): JsonResponse
+    {
+        $movie = movies::findOrFail($id);
+
+        $validator = Validator::make($request->all(), [
+            'title' => 'sometimes|required|string|max:255',
+            'description' => 'sometimes|required|string',
+            'duration_minutes' => 'sometimes|required|integer|min:1',
+            'release_date' => 'sometimes|required|date',
+            'movie_language' => 'sometimes|required|string|max:50',
+            'status' => 'sometimes|required|in:coming_soon,now_showing,inactive',
+            'genre_ids' => 'sometimes|required|array|min:1',
+            'genre_ids.*' => 'exists:genres,id',
+            'poster' => 'sometimes|image|mimes:jpeg,png,jpg,gif,webp|max:5120',
+            'ticket_price' => 'sometimes|nullable|numeric|min:0',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        // Update movie fields
+        $updateData = [];
+        if ($request->has('title')) $updateData['title'] = $request->input('title');
+        if ($request->has('description')) $updateData['description'] = $request->input('description');
+        if ($request->has('duration_minutes')) $updateData['duration_minutes'] = $request->input('duration_minutes');
+        if ($request->has('release_date')) $updateData['release_date'] = $request->input('release_date');
+        if ($request->has('movie_language')) $updateData['movie_language'] = $request->input('movie_language');
+        if ($request->has('status')) $updateData['status'] = $request->input('status');
+
+        // Handle poster upload if provided
+        if ($request->hasFile('poster')) {
+            $file = $request->file('poster');
+            $fileName = time() . '_' . $file->getClientOriginalName();
+            $posterPath = 'posters/' . $fileName;
+            $file->storeAs('public', $posterPath);
+            $updateData['poster_url'] = 'storage/' . $posterPath;
+        }
+
+        // Update movie
+        if (!empty($updateData)) {
+            $movie->update($updateData);
+        }
+
+        // Update genres if provided
+        if ($request->has('genre_ids')) {
+            $genreIds = $request->input('genre_ids', []);
+            $movie->genres()->sync($genreIds);
+        }
+
+        // Update screenings base_price if ticket_price is provided
+        if ($request->has('ticket_price') && $request->input('ticket_price') !== null) {
+            $basePrice = $request->input('ticket_price');
+            $movie->screenings()->update(['base_price' => $basePrice]);
+        }
+
+        // Load genres for response
+        $movie->load('genres');
+
+        return response()->json($movie);
+    }
+
+    // DELETE /api/movies/{id}
+    public function destroy($id): JsonResponse
+    {
+        $movie = movies::findOrFail($id);
+
+        // Delete the movie (cascade will handle related screenings, tickets, etc.)
+        $movie->delete();
+
+        return response()->json(['message' => 'Movie deleted successfully']);
     }
 }
