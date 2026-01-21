@@ -28,6 +28,11 @@ Route::controller(AuthController::class)->prefix('auth')->group(function () {
 
 Route::controller(GenresController::class)->prefix('genres')->group(function () {
     Route::get('/', 'index')->name('genres.index');
+    Route::middleware('auth:api')->group(function () {
+        Route::post('/', 'store')->name('genres.store');
+        Route::put('/{id}', 'update')->name('genres.update');
+        Route::delete('/{id}', 'destroy')->name('genres.destroy');
+    });
 });
 
 Route::controller(MoviesController::class)->prefix('movies')->group(function () {

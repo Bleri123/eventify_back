@@ -12,6 +12,7 @@ class UsersController extends Controller
     public function index(Request $request): JsonResponse
     {
         $users = User::select('id', 'first_name', 'last_name', 'email', 'phone_number', 'city', 'address')
+            ->where('is_active', true)
             ->orderBy('id')
             ->get();
 
@@ -54,20 +55,32 @@ class UsersController extends Controller
         ]);
     }
 
-    public function destroy($id): JsonResponse
+    public function destroy(Request $request, $id): JsonResponse
     {
         try {
             $user = User::findOrFail($id);
-            $user->delete();
+            $currentUser = auth()->user();
+
+            // Prevent users from deactivating themselves
+            if ($currentUser && $currentUser->id == $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You cannot deactivate your own account'
+                ], 403);
+            }
+
+            $user->update([
+                'is_active' => false
+            ]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'User deleted successfully'
+                'message' => 'User deactivated successfully'
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to delete user: ' . $e->getMessage()
+                'message' => 'Failed to deactivate user: ' . $e->getMessage()
             ], 500);
         }
     }

@@ -188,12 +188,20 @@ class MoviesController extends Controller
 
         // Update movie fields
         $updateData = [];
-        if ($request->has('title')) $updateData['title'] = $request->input('title');
-        if ($request->has('description')) $updateData['description'] = $request->input('description');
-        if ($request->has('duration_minutes')) $updateData['duration_minutes'] = $request->input('duration_minutes');
-        if ($request->has('release_date')) $updateData['release_date'] = $request->input('release_date');
-        if ($request->has('movie_language')) $updateData['movie_language'] = $request->input('movie_language');
-        if ($request->has('status')) $updateData['status'] = $request->input('status');
+        $allData = $request->all();
+
+        if ($request->has('title') && $request->filled('title')) $updateData['title'] = $request->input('title');
+        if ($request->has('description') && $request->filled('description')) $updateData['description'] = $request->input('description');
+        if ($request->has('duration_minutes') && $request->filled('duration_minutes')) $updateData['duration_minutes'] = $request->input('duration_minutes');
+        if ($request->has('release_date') && $request->filled('release_date')) $updateData['release_date'] = $request->input('release_date');
+        if ($request->has('movie_language') && $request->filled('movie_language')) $updateData['movie_language'] = $request->input('movie_language');
+
+        // Status should always be updated if provided
+        // Check multiple methods for FormData compatibility with PUT requests
+        $statusValue = $request->input('status') ?? $request->get('status') ?? ($allData['status'] ?? null);
+        if ($statusValue !== null && $statusValue !== '' && in_array($statusValue, ['coming_soon', 'now_showing', 'inactive'])) {
+            $updateData['status'] = $statusValue;
+        }
 
         // Handle poster upload if provided
         if ($request->hasFile('poster')) {
