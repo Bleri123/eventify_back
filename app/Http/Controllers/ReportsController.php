@@ -3,112 +3,165 @@
 namespace App\Http\Controllers;
 
 use App\Models\screenings;
-use App\Models\tickets;
 use App\Models\bookings;
-use App\Models\seats;
+use App\Models\User;
+use App\Models\Report;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 class ReportsController extends Controller
 {
     /**
      * Get all screenings with pagination
-     *
-     * @param Request $request
-     * @return JsonResponse
      */
     public function index(Request $request): JsonResponse
     {
-        $perPage = $request->get('per_page', 10);
-        $page = $request->get('page', 1);
-        $search = $request->get('search', '');
+        try {
+            $perPage = $request->get('per_page', 10);
+            $page = $request->get('page', 1);
+            $search = $request->get('search', '');
 
-        $query = screenings::with(['movie', 'showroom']);
+            $query = screenings::with(['movie', 'showroom']);
 
-        // Filter by movie name if search query is provided
-        if (!empty($search)) {
-            $query->whereHas('movie', function ($q) use ($search) {
-                $q->where('title', 'like', '%' . $search . '%');
+            // Filter by movie name if search query is provided
+            if (!empty($search)) {
+                $query->whereHas('movie', function ($q) use ($search) {
+                    $q->where('title', 'like', '%' . $search . '%');
+                });
+            }
+
+            $screenings = $query->orderBy('start_time', 'desc')
+                ->paginate($perPage, ['*'], 'page', $page);
+
+            $data = $screenings->map(function ($screening) {
+                return [
+                    'id' => $screening->id,
+                    'showroom' => $screening->showroom?->name ?? 'N/A',
+                    'movie_name' => $screening->movie?->title ?? 'N/A',
+                    'time' => date('H:i', strtotime($screening->start_time)),
+                    'date' => date('d/m/Y', strtotime($screening->start_time)),
+                ];
             });
+
+            return response()->json([
+                'data' => $data,
+                'current_page' => $screenings->currentPage(),
+                'last_page' => $screenings->lastPage(),
+                'per_page' => $screenings->perPage(),
+                'total' => $screenings->total(),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => 'Error fetching screenings',
+                'message' => $e->getMessage()
+            ], 500);
         }
-
-        $screenings = $query->orderBy('start_time', 'desc')
-            ->paginate($perPage, ['*'], 'page', $page);
-
-        $data = $screenings->map(function ($screening) {
-            return [
-                'id' => $screening->id,
-                'showroom' => $screening->showroom->name ?? 'N/A',
-                'movie_name' => $screening->movie->title ?? 'N/A',
-                'time' => date('H:i', strtotime($screening->start_time)),
-                'date' => date('d/m/Y', strtotime($screening->start_time)),
-            ];
-        });
-
-        return response()->json([
-            'data' => $data,
-            'current_page' => $screenings->currentPage(),
-            'last_page' => $screenings->lastPage(),
-            'per_page' => $screenings->perPage(),
-            'total' => $screenings->total(),
-        ]);
     }
 
     /**
-     * Get reserved seats for a specific screening
-     *
-     * @param Request $request
-     * @param int $id
-     * @return JsonResponse
+     * Get bookings for a specific screening from reports table
      */
     public function show(Request $request, $id): JsonResponse
     {
-        $perPage = $request->get('per_page', 10);
-        $page = $request->get('page', 1);
+        try {
+            $perPage = $request->get('per_page', 10);
+            $page = $request->get('page', 1);
 
-        $screening = screenings::with(['movie', 'showroom'])->findOrFail($id);
+            // Find screening
+            $screening = screenings::with(['movie', 'showroom'])->findOrFail($id);
 
-        // Get bookings with their tickets and seats
-        $bookings = bookings::where('screening_id', $id)
-            ->whereIn('status', ['reserved', 'paid'])
-            ->with(['user', 'tickets' => function ($query) {
-                $query->with('seat');
-            }])
-            ->paginate($perPage, ['*'], 'page', $page);
+            // Get reports for this screening from reports table
+            $reportsQuery = Report::where('screening_id', $id)
+                ->whereNotIn('status', ['cancelled', 'expired'])
+                ->orderBy('booked_at', 'desc');
 
-        $offset = ($page - 1) * $perPage;
-        $reservedSeats = $bookings->map(function ($booking, $index) use ($offset) {
-            $seats = $booking->tickets
-                ->filter(function ($ticket) {
-                    return $ticket->seat !== null;
-                })
-                ->map(function ($ticket) {
-                    return $ticket->seat->row_label . $ticket->seat->seat_number;
-                })
-                ->toArray();
+            $reportsCount = $reportsQuery->count();
+            $totalPages = ceil($reportsCount / $perPage);
+            $offset = ($page - 1) * $perPage;
 
-            return [
-                'id' => $offset + $index + 1, // Sequential ID for display
-                'email' => $booking->user->email ?? 'N/A',
-                'seats_reserved' => count($seats),
-                'row_reserved' => count($seats) > 0 ? implode(', ', $seats) : 'N/A',
-            ];
-        });
+            $reportsList = $reportsQuery->skip($offset)
+                ->take($perPage)
+                ->get();
 
-        return response()->json([
-            'screening' => [
-                'id' => $screening->id,
-                'movie_name' => $screening->movie->title ?? 'N/A',
-                'showroom' => $screening->showroom->name ?? 'N/A',
-                'time' => date('H:i', strtotime($screening->start_time)),
-                'date' => date('d/m/Y', strtotime($screening->start_time)),
-            ],
-            'data' => $reservedSeats,
-            'current_page' => $bookings->currentPage(),
-            'last_page' => $bookings->lastPage(),
-            'per_page' => $bookings->perPage(),
-            'total' => $bookings->total(),
-        ]);
+            // Format the data
+            $reservedSeats = $reportsList->map(function ($report, $index) use ($offset) {
+                try {
+                    return [
+                        'id' => $offset + $index + 1,
+                        'booking_id' => $report->booking_id,
+                        'first_name' => $report->first_name ?? 'N/A',
+                        'email' => $report->email ?? 'N/A',
+                        'seats_reserved' => $report->seats_reserved ?? 0,
+                        'row_reserved' => $report->row_reserved ?? 'N/A',
+                        'total_price' => floatval($report->total_price ?? 0),
+                        'status' => $report->status,
+                        'booked_at' => $report->booked_at ? $report->booked_at->format('d/m/Y H:i') : 'N/A',
+                    ];
+                } catch (\Exception $e) {
+                    \Log::error('Report mapping error: ' . $e->getMessage(), [
+                        'report_id' => $report->id ?? 'Unknown',
+                    ]);
+
+                    return [
+                        'id' => $offset + $index + 1,
+                        'booking_id' => $report->booking_id ?? 'Unknown',
+                        'first_name' => 'N/A',
+                        'email' => 'N/A',
+                        'seats_reserved' => 0,
+                        'row_reserved' => 'N/A',
+                        'total_price' => 0,
+                        'status' => 'unknown',
+                        'booked_at' => 'N/A',
+                    ];
+                }
+            });
+
+            return response()->json([
+                'screening' => [
+                    'id' => $screening->id,
+                    'movie_name' => $screening->movie?->title ?? 'N/A',
+                    'showroom' => $screening->showroom?->name ?? 'N/A',
+                    'time' => date('H:i', strtotime($screening->start_time)),
+                    'date' => date('d/m/Y', strtotime($screening->start_time)),
+                    'base_price' => $screening->base_price ?? 0,
+                ],
+                'data' => $reservedSeats,
+                'current_page' => $page,
+                'last_page' => $totalPages,
+                'per_page' => $perPage,
+                'total' => $reportsCount,
+            ]);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'error' => 'Screening not found',
+                'screening_id' => $id
+            ], 404);
+        } catch (\Exception $e) {
+            // Try to at least return the screening info even if reports fail
+            try {
+                $screening = screenings::with(['movie', 'showroom'])->findOrFail($id);
+                return response()->json([
+                    'screening' => [
+                        'id' => $screening->id,
+                        'movie_name' => $screening->movie?->title ?? 'N/A',
+                        'showroom' => $screening->showroom?->name ?? 'N/A',
+                        'time' => date('H:i', strtotime($screening->start_time)),
+                        'date' => date('d/m/Y', strtotime($screening->start_time)),
+                        'base_price' => $screening->base_price ?? 0,
+                    ],
+                    'data' => [],
+                    'error' => 'Could not fetch report details. Details: ' . $e->getMessage(),
+                    'current_page' => 1,
+                    'last_page' => 1,
+                    'per_page' => 10,
+                    'total' => 0,
+                ], 200);
+            } catch (\Exception $fallback) {
+                return response()->json([
+                    'error' => 'Error fetching screening details',
+                    'message' => $e->getMessage()
+                ], 500);
+            }
+        }
     }
 }

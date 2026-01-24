@@ -21,7 +21,7 @@ class MoviesSeeder extends Seeder
                 'release_date' => '2025-11-12',
                 'movie_language' => 'English',
                 'status' => 'now_showing',
-                'poster_url' => 'posters/f1-the-movie.png',
+                'poster_url' => 'posters/f1-movie.png',
                 'created_at' => now(),
                 'updated_at' => now(),
             ],

@@ -30,7 +30,7 @@ class bookings extends Model
 
     public function tickets(): HasMany
     {
-        return $this->hasMany(tickets::class);
+        return $this->hasMany(tickets::class, 'booking_id', 'id');
     }
 
     public function payments(): HasMany

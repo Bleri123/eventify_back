@@ -134,10 +134,9 @@ class MoviesController extends Controller
         $posterPath = null;
         if ($request->hasFile('poster')) {
             $file = $request->file('poster');
-            $fileName = time() . '_' . $file->getClientOriginalName();
+            $fileName = $file->getClientOriginalName();
             $posterPath = 'posters/' . $fileName;
             $file->storeAs('public', $posterPath);
-            $posterPath = 'storage/' . $posterPath;
         }
 
         // Create the movie
@@ -155,10 +154,7 @@ class MoviesController extends Controller
         $genreIds = $request->input('genre_ids', []);
         $movie->genres()->attach($genreIds);
 
-        // Load genres for response
-        $movie->load('genres');
-
-        return response()->json($movie, 201);
+        return response()->json($movie);
     }
 
     // PUT /api/movies/{id}
@@ -206,10 +202,10 @@ class MoviesController extends Controller
         // Handle poster upload if provided
         if ($request->hasFile('poster')) {
             $file = $request->file('poster');
-            $fileName = time() . '_' . $file->getClientOriginalName();
+            $fileName = $file->getClientOriginalName();
             $posterPath = 'posters/' . $fileName;
             $file->storeAs('public', $posterPath);
-            $updateData['poster_url'] = 'storage/' . $posterPath;
+            $updateData['poster_url'] = $posterPath;
         }
 
         // Update movie

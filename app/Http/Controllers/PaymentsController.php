@@ -6,10 +6,12 @@ use App\Models\bookings;
 use App\Models\screenings;
 use App\Models\tickets;
 use App\Models\payments;
+use App\Mail\BookingConfirmation;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
 use Stripe\Stripe;
 use Stripe\PaymentIntent;
 
@@ -18,11 +20,11 @@ class PaymentsController extends Controller
     public function __construct()
     {
         $stripeKey = config('services.stripe.secret');
-        
+
         if (!$stripeKey) {
             throw new \Exception('STRIPE_SECRET_KEY is not set in .env file');
         }
-        
+
         Stripe::setApiKey($stripeKey);
     }
 
@@ -81,16 +83,6 @@ class PaymentsController extends Controller
                 return response()->json(['error' => 'Payment not succeeded'], 400);
             }
 
-            // Check if booking already exists (prevent duplicates)
-            $existingBooking = bookings::where('user_id', Auth::id())
-                ->where('screening_id', $request->screening_id)
-                ->where('status', 'paid')
-                ->first();
-
-            if ($existingBooking) {
-                return response()->json(['error' => 'Booking already exists'], 400);
-            }
-
             DB::beginTransaction();
 
             $screening = screenings::findOrFail($request->screening_id);
@@ -124,7 +116,49 @@ class PaymentsController extends Controller
                 'transaction_ref' => $paymentIntent->id,
             ]);
 
+            // Manually sync to reports after tickets are created
+            $booking->load('tickets.seat');
+            \App\Observers\BookingObserver::syncBookingToReports($booking);
+
             DB::commit();
+
+            // Prepare seat information for email
+            $seatsInfo = [];
+            $screeningTickets = $booking->tickets()->with('seat')->get();
+            foreach ($screeningTickets as $ticket) {
+                if ($ticket->seat) {
+                    $seatsInfo[] = $ticket->seat->row_label . $ticket->seat->seat_number;
+                }
+            }
+            $seatsInfoString = implode(', ', $seatsInfo);
+
+            // Get screening details for email
+            $screeningDetails = $screening->load('movie', 'showroom');
+            $movieName = $screeningDetails->movie->title ?? 'Movie';
+            $showroom = $screeningDetails->showroom->name ?? 'Showroom';
+            $startTime = $screeningDetails->start_time;
+            if (is_string($startTime)) {
+                $startTime = \Carbon\Carbon::parse($startTime);
+            }
+            $screeningTime = $startTime->format('l, F j, Y \a\t H:i');
+
+            // Send confirmation email
+            try {
+                $booking->load('user');
+                Mail::to($booking->user->email)
+                    ->send(new BookingConfirmation(
+                        $booking,
+                        $movieName,
+                        $showroom,
+                        $screeningTime,
+                        $seatsInfoString,
+                        $totalPrice
+                    ));
+            } catch (\Exception $emailError) {
+                \Log::error('Error sending booking confirmation email: ' . $emailError->getMessage(), [
+                    'booking_id' => $booking->id,
+                ]);
+            }
 
             return response()->json([
                 'success' => true,
