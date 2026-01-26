@@ -24,6 +24,11 @@ class MoviesController extends Controller
         // Always load genres
         $query->with('genres');
 
+        // Exclude inactive movies by default (unless specifically requested)
+        if ($request->query('status') !== 'inactive') {
+            $query->where('status', '!=', 'inactive');
+        }
+
         $date = $request->query('date');
 
         // If a date is provided, eager-load screenings for that date
@@ -234,11 +239,23 @@ class MoviesController extends Controller
     // DELETE /api/movies/{id}
     public function destroy($id): JsonResponse
     {
-        $movie = movies::findOrFail($id);
+        try {
+            $movie = movies::findOrFail($id);
 
-        // Delete the movie (cascade will handle related screenings, tickets, etc.)
-        $movie->delete();
+            // Mark movie as inactive instead of deleting
+            $movie->update([
+                'status' => 'inactive'
+            ]);
 
-        return response()->json(['message' => 'Movie deleted successfully']);
+            return response()->json([
+                'success' => true,
+                'message' => 'Movie removed successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to remove movie: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }
